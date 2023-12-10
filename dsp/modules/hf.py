@@ -30,7 +30,8 @@ def openai_to_hf(**kwargs):
 
 class HFModel(LM):
     def __init__(self, model: str, checkpoint: Optional[str] = None, is_client: bool = False,
-                 hf_device_map: Literal["auto", "balanced", "balanced_low_0", "sequential"] = "auto"):
+                 hf_device_map: Literal["auto", "balanced", "balanced_low_0", "sequential"] = "auto",
+                 trust_remote_code: bool = False, quantize_w_bnb: bool = False):
         """wrapper for Hugging Face models
 
         Args:
@@ -41,7 +42,7 @@ class HFModel(LM):
                 Recommeded to use "auto", which will help loading large models using accelerate. Defaults to "auto".
         """
         try:
-            from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer, AutoConfig
+            from transformers import BitsAndBytesConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer, AutoConfig
             import torch
         except ImportError as exc:
             raise ModuleNotFoundError(
@@ -51,14 +52,22 @@ class HFModel(LM):
         self.provider = "hf"
         self.is_client = is_client
         self.device_map = hf_device_map
+        self.quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        self.trust_remote_code = trust_remote_code
+        print(f'Hey loser. Just set self.quantization_config')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if not self.is_client:
             try:
-                architecture = AutoConfig.from_pretrained(model).__dict__["architectures"][0]
+                architecture = AutoConfig.from_pretrained(model, trust_remote_code = self.trust_remote_code).__dict__["architectures"][0]
                 self.encoder_decoder_model = ("ConditionalGeneration" in architecture) or ("T5WithLMHeadModel" in architecture)
                 self.decoder_only_model = ("CausalLM" in architecture) or ("GPT2LMHeadModel" in architecture)
                 assert self.encoder_decoder_model or self.decoder_only_model, f"Unknown HuggingFace model class: {model}"
-                self.tokenizer = AutoTokenizer.from_pretrained(model if checkpoint is None else checkpoint)
+                self.tokenizer = AutoTokenizer.from_pretrained(model if checkpoint is None else checkpoint, trust_remote_code = True)
 
                 self.rationale = True
                 AutoModelClass = AutoModelForSeq2SeqLM if self.encoder_decoder_model else AutoModelForCausalLM
@@ -73,12 +82,19 @@ class HFModel(LM):
                     # else:
                     self.model = AutoModelClass.from_pretrained(checkpoint).to("cuda")
                 else:
-                    self.model = AutoModelClass.from_pretrained(model).to("cuda")
+                    self.model = AutoModelClass.from_pretrained(
+                        model, 
+                        device_map = hf_device_map, 
+                        quantization_config = self.quantization_config if quantize_w_bnb else None, 
+                        trust_remote_code = self.trust_remote_code,
+                    )
                 self.drop_prompt_from_output = False
             except ValueError:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model if checkpoint is None else checkpoint,
-                    device_map=hf_device_map
+                    device_map=hf_device_map,
+                    quantization_config=self.quantization_config if quantize_w_bnb else None,
+                    trust_remote_code= self.trust_remote_code,
                 )
                 self.drop_prompt_from_output = True
                 self.tokenizer = AutoTokenizer.from_pretrained(model)
