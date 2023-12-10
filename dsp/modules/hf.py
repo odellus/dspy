@@ -67,7 +67,7 @@ class HFModel(LM):
                 self.encoder_decoder_model = ("ConditionalGeneration" in architecture) or ("T5WithLMHeadModel" in architecture)
                 self.decoder_only_model = ("CausalLM" in architecture) or ("GPT2LMHeadModel" in architecture)
                 assert self.encoder_decoder_model or self.decoder_only_model, f"Unknown HuggingFace model class: {model}"
-                self.tokenizer = AutoTokenizer.from_pretrained(model if checkpoint is None else checkpoint, trust_remote_code = True)
+                self.tokenizer = AutoTokenizer.from_pretrained(model if checkpoint is None else checkpoint, trust_remote_code = self.trust_remote_code)
 
                 self.rationale = True
                 AutoModelClass = AutoModelForSeq2SeqLM if self.encoder_decoder_model else AutoModelForCausalLM
@@ -88,7 +88,10 @@ class HFModel(LM):
                         quantization_config = self.quantization_config if quantize_w_bnb else None, 
                         trust_remote_code = self.trust_remote_code,
                     )
-                self.drop_prompt_from_output = False
+                if self.encoder_decoder_model:
+                    self.drop_prompt_from_output = False
+                else:
+                    self.drop_prompt_from_output = True
             except ValueError:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model if checkpoint is None else checkpoint,
@@ -126,10 +129,11 @@ class HFModel(LM):
                 prompt = prompt['messages'][0]['content']
             except (KeyError, IndexError, TypeError):
                 print("Failed to extract 'content' from the prompt.")
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
-        # print(kwargs)
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         outputs = self.model.generate(**inputs, **kwargs)
+        # print(kwargs)
+        
         if self.drop_prompt_from_output:
             input_length = inputs.input_ids.shape[1]
             outputs = outputs[:, input_length:]
