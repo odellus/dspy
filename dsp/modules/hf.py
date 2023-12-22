@@ -99,7 +99,6 @@ class HFModel(LM):
                     quantization_config=self.quantization_config if quantize_w_bnb else None,
                     trust_remote_code= self.trust_remote_code,
                 )
-                self.drop_prompt_from_output = True
                 self.tokenizer = AutoTokenizer.from_pretrained(model)
                 self.drop_prompt_from_output = True
         self.history = []
